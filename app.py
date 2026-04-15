@@ -110,7 +110,7 @@ if st.session_state.itens:
         pdf.set_font("Arial", "I", 9)
         pdf.multi_cell(0, 5, rodape)
         
-        return pdf.output()
+        return bytes(pdf.output())
 
     pdf_bytes = gerar_pdf()
     st.download_button(
