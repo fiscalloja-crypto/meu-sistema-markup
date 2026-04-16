@@ -172,7 +172,20 @@ with aba1:
                         conn.update(spreadsheet=url_planilha, data=atualizado)
                         st.success("✅ Salvo com sucesso!")
                     except Exception as e:
-                        st.error(f"Erro ao salvar: {e}")
+                        err_str = str(e)
+                        st.error(f"Erro ao salvar: {err_str}")
+                        if "404" in err_str:
+                            st.warning("""
+**Erro 404 — Planilha não encontrada.** Verifique:
+1. A URL em `secrets.toml` → campo `spreadsheet` está correta?
+2. A planilha foi compartilhada com o e-mail da service account:
+   `streamlit-bot@meusistemavendas.iam.gserviceaccount.com` (permissão: **Editor**)
+3. O ID da planilha na URL bate com o que está no secrets?
+""")
+                        elif "403" in err_str:
+                            st.warning("**Erro 403 — Sem permissão.** Compartilhe a planilha com a service account como **Editor**.")
+                        elif "KeyError" in err_str:
+                            st.warning("**KeyError** — Verifique se o secrets.toml tem todos os campos da service account.")
 
             # --- GERAR PDF ---
             with c_b2:
@@ -231,7 +244,8 @@ with aba1:
                         pdf.cell(85, 7, desc_safe[:45],        fill=fill)
                         pdf.cell(15, 7, str(r['Un']),          fill=fill, align='C')
                         pdf.cell(15, 7, str(r['Qtd']),         fill=fill, align='C')
-                        pdf.cell(28, 7, f"R${r['Preco Un.']:.2f}", fill=fill, align='R')
+                        preco_un_val = float(r.get('Preço Un.', r.get('Preco Un.', 0)))
+                        pdf.cell(28, 7, f"R${preco_un_val:.2f}", fill=fill, align='R')
                         pdf.cell(29, 7, f"R${r['Total']:.2f}", fill=fill, align='R')
                         pdf.ln()
                         fill = not fill
