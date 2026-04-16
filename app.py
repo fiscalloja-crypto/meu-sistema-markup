@@ -5,10 +5,25 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import ast
 
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Sistema de Vendas Pro", layout="wide")
 
+# --- CORREÇÃO AUTOMÁTICA DA CHAVE PRIVADA ---
+# Isso resolve o erro "InvalidPadding" ou "InvalidByte" 
+# limpando a chave antes de passar para a conexão.
+if "connections" in st.secrets and "gsheets" in st.secrets.connections:
+    raw_key = st.secrets.connections.gsheets.private_key
+    # Remove aspas extras acidentais e converte \n literal em quebra de linha real
+    clean_key = raw_key.strip().replace("\\n", "\n")
+    if clean_key.startswith('"') and clean_key.endswith('"'):
+        clean_key = clean_key[1:-1]
+    st.secrets.connections.gsheets.private_key = clean_key
+
 # Conexão com Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as e:
+    st.error(f"Erro na conexão: {e}")
 
 # --- INICIALIZAÇÃO DO ESTADO ---
 if 'itens' not in st.session_state:
@@ -23,16 +38,15 @@ with st.sidebar:
     contato_vendedor = st.text_input("Vendedor / Contato", "João - (11) 99999-9999")
     markup_padrao = st.number_input("Markup Padrão", value=1.80, step=0.05)
     st.divider()
-    if st.button("🔄 Sincronizar com Google Sheets"):
+    if st.button("🔄 Forçar Sincronização"):
         st.cache_data.clear()
         st.rerun()
 
-aba1, aba2 = st.tabs(["📝 Novo Orçamento / Edição", "📂 Histórico (Google Sheets)"])
+aba1, aba2 = st.tabs(["📝 Novo Orçamento", "📂 Histórico"])
 
 with aba1:
     st.title(f"Orçamento: {st.session_state.id_orcamento}")
     
-    # Lançamento de Itens
     with st.expander("➕ Adicionar Item", expanded=True):
         c1, c2, c3 = st.columns([3, 1, 1])
         with c1: nome = st.text_input("Descrição")
@@ -60,10 +74,9 @@ with aba1:
         st.session_state.itens = df_editado.to_dict('records')
         subtotal = df_editado["Total"].sum()
         
-        # Pagamentos
         st.subheader("💳 Condições de Pagamento")
         col_p1, col_p2 = st.columns(2)
-        form_pag = ["Pix / Dinheiro", "Cartão de Débito", "Crédito 1x", "Crédito Parcelado"]
+        form_pag = ["Pix / Dinheiro", "Cartão", "Crédito 1x"]
         escolhas_pag = []
         for i, f in enumerate(form_pag):
             c_p = col_p1 if i % 2 == 0 else col_p2
@@ -81,7 +94,6 @@ with aba1:
             with c_b1:
                 if st.button("💾 SALVAR NA PLANILHA"):
                     try:
-                        # Busca dados atuais
                         existente = conn.read(ttl=0)
                         novo_reg = pd.DataFrame([{
                             "ID": st.session_state.id_orcamento,
@@ -90,57 +102,40 @@ with aba1:
                             "Cliente": "Venda Direta",
                             "Itens": str(st.session_state.itens)
                         }])
-                        # Junta e salva
                         atualizado = pd.concat([existente, novo_reg], ignore_index=True)
                         conn.update(data=atualizado)
-                        st.success("Salvo no Google Sheets!")
+                        st.success("Salvo com sucesso!")
                     except Exception as e:
                         st.error(f"Erro ao salvar: {e}")
 
-            def gerar_pdf():
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", "B", 16)
-                pdf.cell(0, 10, nome_empresa.upper(), ln=True)
-                pdf.set_font("Arial", "", 10)
-                pdf.cell(0, 5, f"Orçamento: {st.session_state.id_orcamento}", ln=True)
-                pdf.line(10, 28, 200, 28); pdf.ln(10)
-                pdf.set_font("Arial", "B", 10)
-                pdf.cell(10, 8, "N", 1); pdf.cell(90, 8, "Desc", 1); pdf.cell(15, 8, "Qtd", 1); pdf.cell(30, 8, "Total", 1); pdf.ln()
-                pdf.set_font("Arial", "", 10)
-                for i, r in df_editado.iterrows():
-                    pdf.cell(10, 8, str(r["Nº"]), 1); pdf.cell(90, 8, str(r["Descrição"]), 1)
-                    pdf.cell(15, 8, str(r["Qtd"]), 1); pdf.cell(30, 8, f"{r['Total']:.2f}", 1); pdf.ln()
-                pdf.ln(5); pdf.set_font("Arial", "B", 12)
-                pdf.cell(0, 10, f"TOTAL: R$ {v_final:.2f} ({selecionado})", ln=True)
-                return bytes(pdf.output())
-
             with c_b2:
+                # Função simples para gerar PDF
+                def gerar_pdf():
+                    pdf = FPDF()
+                    pdf.add_page()
+                    pdf.set_font("Arial", "B", 16)
+                    pdf.cell(0, 10, nome_empresa.upper(), ln=True)
+                    pdf.set_font("Arial", "", 10)
+                    pdf.cell(0, 5, f"Orçamento: {st.session_state.id_orcamento}", ln=True)
+                    pdf.ln(10)
+                    for r in st.session_state.itens:
+                        pdf.cell(0, 8, f"{r['Qtd']}x {r['Descrição']} - R$ {r['Total']:.2f}", ln=True)
+                    pdf.ln(5)
+                    pdf.cell(0, 10, f"TOTAL: R$ {v_final:.2f}", ln=True)
+                    return bytes(pdf.output())
+                
                 st.download_button("📥 Gerar PDF", data=gerar_pdf(), file_name=f"Orc_{st.session_state.id_orcamento}.pdf")
+
             with c_b3:
                 if st.button("🔴 Novo / Limpar"):
-                    st.session_state.itens = []; st.session_state.id_orcamento = datetime.now().strftime("%Y%m%d-%H%M")
+                    st.session_state.itens = []
+                    st.session_state.id_orcamento = datetime.now().strftime("%Y%m%d-%H%M")
                     st.rerun()
 
 with aba2:
-    st.title("📂 Histórico Profissional")
+    st.title("📂 Histórico")
     try:
-        dados_historico = conn.read(ttl="10m")
-        if not dados_historico.empty:
-            busca = st.text_input("Filtrar por ID ou Data")
-            df_exibir = dados_historico
-            if busca:
-                df_exibir = dados_historico[dados_historico.astype(str).apply(lambda x: busca in x.values, axis=1)]
-            
-            st.dataframe(df_exibir[["ID", "Data", "Total", "Cliente"]], use_container_width=True)
-            
-            id_carregar = st.selectbox("Selecione para EDITAR:", dados_historico["ID"].unique())
-            if st.button("⚡ Carregar Orçamento"):
-                reg = dados_historico[dados_historico["ID"] == id_carregar].iloc[0]
-                st.session_state.id_orcamento = reg["ID"]
-                st.session_state.itens = ast.literal_eval(reg["Itens"])
-                st.success("Carregado! Vá para a Aba 1.")
-        else:
-            st.info("Planilha vazia.")
+        dados = conn.read(ttl="1m")
+        st.dataframe(dados, use_container_width=True)
     except:
-        st.warning("Conecte a planilha nos Secrets para ver o histórico.")
+        st.info("Nenhum dado encontrado ou planilha não configurada.")
