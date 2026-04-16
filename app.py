@@ -9,175 +9,163 @@ st.set_page_config(page_title="Sistema de Vendas Pro", layout="wide")
 if 'itens' not in st.session_state:
     st.session_state.itens = []
 if 'id_orcamento' not in st.session_state:
-    # Gera um ID baseado em AnoMesDiaHoraMinuto
     st.session_state.id_orcamento = datetime.now().strftime("%Y%m%d-%H%M")
+if 'historico' not in st.session_state:
+    st.session_state.historico = pd.DataFrame()
 
-# --- SIDEBAR: CONFIGURAÇÕES FIXAS ---
+# --- BARRA LATERAL ---
 with st.sidebar:
-    st.header("🖼️ Identificação Visual")
-    logo_url = st.text_input("URL da Logo (Opcional)", "")
-    if logo_url:
-        st.image(logo_url, width=150)
-    
-    st.header("🏢 Dados Fixos")
+    st.header("🏢 Configurações da Empresa")
     nome_empresa = st.text_input("Nome da Empresa", "Minha Loja")
     contato_vendedor = st.text_input("Vendedor / Contato", "João - (11) 99999-9999")
-    
     st.divider()
-    st.header("⚙️ Configuração Geral")
     markup_padrao = st.number_input("Markup Padrão", value=1.80, step=0.05)
-    
     st.divider()
-    st.header("📄 Rodapé do PDF")
-    rodape_texto = st.text_area("Termos e Condições", "Validade: 3 dias. Garantia de fábrica.")
+    # DICA: Para salvar de verdade, você precisará configurar o st.connection("gsheets")
+    st.info("Para persistência total entre dias, conecte ao Google Sheets nas configurações de Secrets.")
 
-# --- ÁREA DE LANÇAMENTO ---
-st.title(f"📄 Orçamento Nº: {st.session_state.id_orcamento}")
+# --- NAVEGAÇÃO POR ABAS ---
+aba1, aba2 = st.tabs(["📝 Novo Orçamento / Edição", "📂 Histórico de Orçamentos"])
 
-with st.expander("➕ Lançar Novo Item", expanded=True):
-    c1, c2, c3 = st.columns([3, 1, 1])
-    with c1:
-        nome = st.text_input("Descrição do Produto/Serviço")
-    with c2:
-        unidade = st.selectbox("Un", ["UN", "KG", "MT", "CX", "PAR"])
-    with c3:
-        qtd = st.number_input("Quantidade", min_value=1, value=1)
+with aba1:
+    st.title(f"Orçamento: {st.session_state.id_orcamento}")
     
-    c4, c5, c6 = st.columns(3)
-    with c4:
-        custo = st.number_input("Custo Unit. (R$)", min_value=0.0, format="%.2f")
-    with c5:
-        markup_item = st.number_input("Markup do item", value=markup_padrao)
-    with c6:
-        desc_item = st.number_input("Desconto no Item (R$)", value=0.0)
-
-    if st.button("Adicionar Item"):
-        if nome and custo > 0:
-            preco_final_un = (custo * markup_item) - desc_item
-            st.session_state.itens.append({
-                "Nº": len(st.session_state.itens) + 1,
-                "Descrição": nome,
-                "Un": unidade,
-                "Qtd": qtd,
-                "Preço Un.": round(preco_final_un, 2),
-                "Total": round(preco_final_un * qtd, 2)
-            })
-            st.rerun()
-
-# --- TABELA EDITÁVEL (PARA CORREÇÃO) ---
-st.subheader("🛒 Itens do Orçamento (Clique para editar)")
-if st.session_state.itens:
-    df_original = pd.DataFrame(st.session_state.itens)
-    
-    # O data_editor permite que você mude qualquer valor direto na tabela
-    df_editado = st.data_editor(
-        df_original, 
-        num_rows="dynamic", 
-        use_container_width=True,
-        key="editor_itens"
-    )
-    # Recalcula o total caso o usuário mude Qtd ou Preço Un. manualmente
-    df_editado["Total"] = df_editado["Qtd"] * df_editado["Preço Un."]
-    st.session_state.itens = df_editado.to_dict('records')
-    
-    subtotal = df_editado["Total"].sum()
-    st.markdown(f"### Subtotal: **R$ {subtotal:.2f}**")
-
-    st.divider()
-
-    # --- GERENCIADOR DE PAGAMENTOS ---
-    st.subheader("💳 Formas de Pagamento e Condições")
-    
-    # Criamos uma lista de opções para o usuário habilitar
-    opcoes_pag = [
-        {"nome": "Pix / Dinheiro", "ajuste_padrao": -5.0}, # -5% desconto
-        {"nome": "Cartão de Débito", "ajuste_padrao": 0.0},
-        {"nome": "Cartão de Crédito (1x)", "ajuste_padrao": 3.5}, # +3.5% taxa
-        {"nome": "Crédito Parcelado", "ajuste_padrao": 7.0}
-    ]
-
-    escolhas_finais = []
-    col_pag_1, col_pag_2 = st.columns(2)
-
-    for i, op in enumerate(opcoes_pag):
-        # Colocamos as opções em duas colunas para economizar espaço
-        alvo = col_pag_1 if i % 2 == 0 else col_pag_2
+    # Lançamento de Itens
+    with st.expander("➕ Adicionar Item", expanded=True):
+        c1, c2, c3 = st.columns([3, 1, 1])
+        with c1: nome = st.text_input("Descrição")
+        with c2: unidade = st.selectbox("Un", ["UN", "KG", "MT", "CX"])
+        with c3: qtd = st.number_input("Quantidade", min_value=1, value=1)
         
-        with alvo:
-            habilitar = st.checkbox(f"Exibir {op['nome']}", value=True, key=f"chk_{i}")
-            if habilitar:
-                percentual = st.number_input(f"% Ajuste para {op['nome']} (- para desc, + para taxa)", value=op['ajuste_padrao'], key=f"perc_{i}")
-                valor_final = subtotal * (1 + (percentual / 100))
-                st.write(f"➡️ **Final: R$ {valor_final:.2f}**")
-                escolhas_finais.append({"nome": op['nome'], "valor": valor_final, "ajuste": percentual})
+        c4, c5, c6 = st.columns(3)
+        with c4: custo = st.number_input("Custo Unit. (R$)", min_value=0.0)
+        with c5: mkp = st.number_input("Markup", value=markup_padrao)
+        with c6: desc = st.number_input("Desconto (R$)", value=0.0)
 
-    st.divider()
+        if st.button("Adicionar"):
+            if nome and custo > 0:
+                preco_un = (custo * mkp) - desc
+                st.session_state.itens.append({
+                    "Nº": len(st.session_state.itens) + 1,
+                    "Descrição": nome,
+                    "Un": unidade,
+                    "Qtd": qtd,
+                    "Preço Un.": round(preco_un, 2),
+                    "Total": round(preco_un * qtd, 2)
+                })
+                st.rerun()
 
-    # Seleção do que vai para o PDF
-    opcao_selecionada_pdf = st.selectbox("Selecione a forma de pagamento que aparecerá no PDF:", [e['nome'] for e in escolhas_finais])
-    dados_pag_pdf = next(item for item in escolhas_finais if item["nome"] == opcao_selecionada_pdf)
+    # Tabela Editável
+    if st.session_state.itens:
+        df_itens = pd.DataFrame(st.session_state.itens)
+        st.subheader("Itens Lançados (Edite se necessário)")
+        df_editado = st.data_editor(df_itens, num_rows="dynamic", use_container_width=True)
+        df_editado["Total"] = df_editado["Qtd"] * df_editado["Preço Un."]
+        st.session_state.itens = df_editado.to_dict('records')
+        
+        subtotal = df_editado["Total"].sum()
+        
+        st.divider()
+        
+        # Pagamentos e Descontos
+        st.subheader("💳 Condições de Pagamento")
+        col_p1, col_p2 = st.columns(2)
+        
+        # Lógica de seleção e desconto dinâmico
+        form_pag = ["Pix / Dinheiro", "Cartão de Débito", "Crédito 1x", "Crédito Parcelado"]
+        escolhas_pag = []
+        
+        for i, f in enumerate(form_pag):
+            c_p = col_p1 if i % 2 == 0 else col_p2
+            with c_p:
+                if st.checkbox(f"Habilitar {f}", value=True):
+                    taxa = st.number_input(f"% Ajuste {f}", value=-5.0 if "Pix" in f else 0.0, key=f"t_{f}")
+                    valor_f = subtotal * (1 + (taxa/100))
+                    st.write(f"Valor: R$ {valor_f:.2f}")
+                    escolhas_pag.append({"nome": f, "valor": valor_f})
 
-    # --- FUNÇÃO GERAR PDF ---
-    def gerar_pdf(nome_emp, contato, id_orc, itens_df, dados_pag, rod):
-        pdf = FPDF()
-        pdf.add_page()
-        
-        # Cabeçalho
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, nome_emp.upper(), ln=True)
-        pdf.set_font("Arial", "", 10)
-        pdf.cell(0, 5, f"Orçamento: {id_orc} | Contato: {contato}", ln=True)
-        pdf.cell(0, 5, f"Data: {datetime.now().strftime('%d/%m/%Y')}", ln=True)
-        pdf.line(10, 32, 200, 32)
-        pdf.ln(10)
-        
-        # Tabela
-        pdf.set_font("Arial", "B", 10)
-        pdf.set_fill_color(240, 240, 240)
-        pdf.cell(10, 8, "N", 1, 0, "C", True)
-        pdf.cell(90, 8, "Descricao", 1, 0, "L", True)
-        pdf.cell(15, 8, "Un", 1, 0, "C", True)
-        pdf.cell(15, 8, "Qtd", 1, 0, "C", True)
-        pdf.cell(30, 8, "Unit (R$)", 1, 0, "R", True)
-        pdf.cell(30, 8, "Total (R$)", 1, 1, "R", True)
-        
-        pdf.set_font("Arial", "", 10)
-        for _, row in itens_df.iterrows():
-            pdf.cell(10, 8, str(row["Nº"]), 1, 0, "C")
-            pdf.cell(90, 8, str(row["Descrição"]), 1)
-            pdf.cell(15, 8, str(row["Un"]), 1, 0, "C")
-            pdf.cell(15, 8, str(row["Qtd"]), 1, 0, "C")
-            pdf.cell(30, 8, f"{row['Preço Un.']:.2f}", 1, 0, "R")
-            pdf.cell(30, 8, f"{row['Total']:.2f}", 1, 1, "R")
-        
-        # Fechamento
-        pdf.ln(5)
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, f"FORMA DE PAGAMENTO: {dados_pag['nome']}", ln=True)
-        pdf.set_text_color(200, 0, 0)
-        pdf.cell(0, 8, f"TOTAL DO ORCAMENTO: R$ {dados_pag['valor']:.2f}", ln=True)
-        pdf.set_text_color(0, 0, 0)
-        
-        # Rodapé
-        pdf.ln(10)
-        pdf.set_font("Arial", "I", 8)
-        pdf.multi_cell(0, 5, rod)
-        
-        return bytes(pdf.output())
+        # Seleção Final para o PDF
+        if escolhas_pag:
+            selecionado = st.selectbox("Forma para o PDF", [e['nome'] for e in escolhas_pag])
+            v_final = next(e['valor'] for e in escolhas_pag if e['nome'] == selecionado)
 
-    btn_pdf = gerar_pdf(nome_empresa, contato_vendedor, st.session_state.id_orcamento, df_editado, dados_pag_pdf, rodape_texto)
-    
-    st.download_button(
-        label="📥 Baixar Orçamento em PDF",
-        data=btn_pdf,
-        file_name=f"orcamento_{st.session_state.id_orcamento}.pdf",
-        mime="application/pdf"
-    )
+            # --- BOTÕES DE AÇÃO ---
+            c_b1, c_b2, c_b3 = st.columns(3)
+            
+            with c_b1:
+                if st.button("💾 Salvar no Banco de Dados"):
+                    # Aqui simulamos o salvamento. Em um app real, enviamos para o Google Sheets.
+                    novo_registro = {
+                        "ID": st.session_state.id_orcamento,
+                        "Data": datetime.now().strftime("%d/%m/%Y"),
+                        "Total": v_final,
+                        "Cliente": "Venda Direta",
+                        "Itens": str(st.session_state.itens) # Salva os itens como texto para recuperar depois
+                    }
+                    # Adiciona ao histórico temporário
+                    st.session_state.historico = pd.concat([st.session_state.historico, pd.DataFrame([novo_registro])])
+                    st.success("Orçamento Salvo com Sucesso!")
 
-    if st.button("🔴 Novo Orçamento (Limpar Tudo)"):
-        st.session_state.itens = []
-        # Gera novo ID
-        st.session_state.id_orcamento = datetime.now().strftime("%Y%m%d-%H%M")
-        st.rerun()
-else:
-    st.info("Adicione itens para começar.")
+            # Gerador de PDF (Mesma lógica anterior com melhorias visuais)
+            def gerar_pdf():
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", "B", 16)
+                pdf.cell(0, 10, nome_empresa.upper(), ln=True)
+                pdf.set_font("Arial", "", 10)
+                pdf.cell(0, 5, f"Orçamento: {st.session_state.id_orcamento} | Contato: {contato_vendedor}", ln=True)
+                pdf.line(10, 28, 200, 28)
+                pdf.ln(10)
+                
+                # Tabela no PDF
+                pdf.set_font("Arial", "B", 10)
+                pdf.cell(10, 8, "N", 1); pdf.cell(90, 8, "Descricao", 1); pdf.cell(15, 8, "Un", 1)
+                pdf.cell(15, 8, "Qtd", 1); pdf.cell(30, 8, "Total (R$)", 1); pdf.ln()
+                pdf.set_font("Arial", "", 10)
+                for i, r in df_editado.iterrows():
+                    pdf.cell(10, 8, str(r["Nº"]), 1)
+                    pdf.cell(90, 8, str(r["Descrição"]), 1)
+                    pdf.cell(15, 8, str(r["Un"]), 1)
+                    pdf.cell(15, 8, str(r["Qtd"]), 1)
+                    pdf.cell(30, 8, f"{r['Total']:.2f}", 1); pdf.ln()
+                
+                pdf.ln(5)
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(0, 10, f"TOTAL: R$ {v_final:.2f} ({selecionado})", ln=True)
+                return bytes(pdf.output())
+
+            with c_b2:
+                st.download_button("📥 Gerar PDF", data=gerar_pdf(), file_name=f"Orc_{st.session_state.id_orcamento}.pdf")
+
+            with c_b3:
+                if st.button("🔴 Novo / Limpar"):
+                    st.session_state.itens = []
+                    st.session_state.id_orcamento = datetime.now().strftime("%Y%m%d-%H%M")
+                    st.rerun()
+
+with aba2:
+    st.title("📂 Consultar Histórico")
+    if not st.session_state.historico.empty:
+        # Filtro por data
+        data_busca = st.text_input("Buscar por data (Ex: 16/04/2026)")
+        
+        df_hist = st.session_state.historico
+        if data_busca:
+            df_hist = df_hist[df_hist["Data"] == data_busca]
+            
+        st.dataframe(df_hist[["ID", "Data", "Total", "Cliente"]], use_container_width=True)
+        
+        st.divider()
+        id_para_editar = st.selectbox("Selecione um ID para RE-EDITAR ou IMPRIMIR:", df_hist["ID"].unique())
+        
+        if st.button("⚡ Carregar este Orçamento"):
+            # Lógica para puxar os dados de volta para a aba principal
+            registro = df_hist[df_hist["ID"] == id_para_editar].iloc[0]
+            st.session_state.id_orcamento = registro["ID"]
+            # Converte a string de volta para lista
+            import ast
+            st.session_state.itens = ast.literal_eval(registro["Itens"])
+            st.success("Orçamento carregado na Aba 1!")
+            # st.rerun() não funciona bem entre abas, o usuário clica na aba 1 para ver.
+    else:
+        st.warning("Ainda não há orçamentos salvos nesta sessão.")
