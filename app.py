@@ -3,27 +3,39 @@ import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
-import ast
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Sistema de Vendas Pro", layout="wide")
 
-# --- CORREÇÃO AUTOMÁTICA DA CHAVE PRIVADA ---
-# Isso resolve o erro "InvalidPadding" ou "InvalidByte" 
-# limpando a chave antes de passar para a conexão.
-if "connections" in st.secrets and "gsheets" in st.secrets.connections:
-    raw_key = st.secrets.connections.gsheets.private_key
-    # Remove aspas extras acidentais e converte \n literal em quebra de linha real
-    clean_key = raw_key.strip().replace("\\n", "\n")
-    if clean_key.startswith('"') and clean_key.endswith('"'):
-        clean_key = clean_key[1:-1]
-    st.secrets.connections.gsheets.private_key = clean_key
+# --- FUNÇÃO PARA CONECTAR COM CHAVE LIMPA ---
+def get_connection():
+    # Pegamos os dados dos secrets
+    creds = st.secrets["connections"]["gsheets"]
+    
+    # Criamos uma cópia limpa da chave privada para evitar erros de padding/bytes
+    # Transformamos o segredo em um dicionário comum para podermos manipular
+    creds_dict = {
+        "type": creds["type"],
+        "project_id": creds["project_id"],
+        "private_key_id": creds["private_key_id"],
+        "private_key": creds["private_key"].replace("\\n", "\n").strip(),
+        "client_email": creds["client_email"],
+        "client_id": creds["client_id"],
+        "auth_uri": creds["auth_uri"],
+        "token_uri": creds["token_uri"],
+        "auth_provider_x509_cert_url": creds["auth_provider_x509_cert_url"],
+        "client_x509_cert_url": creds["client_x509_cert_url"],
+        "spreadsheet": creds["spreadsheet"]
+    }
+    
+    # Retorna a conexão usando o dicionário tratado
+    return st.connection("gsheets", type=GSheetsConnection, **creds_dict)
 
-# Conexão com Google Sheets
+# Inicializa a conexão
 try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    conn = get_connection()
 except Exception as e:
-    st.error(f"Erro na conexão: {e}")
+    st.error(f"Erro ao configurar conexão: {e}")
 
 # --- INICIALIZAÇÃO DO ESTADO ---
 if 'itens' not in st.session_state:
@@ -94,7 +106,8 @@ with aba1:
             with c_b1:
                 if st.button("💾 SALVAR NA PLANILHA"):
                     try:
-                        existente = conn.read(ttl=0)
+                        # Lê dados atuais
+                        existente = conn.read(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], ttl=0)
                         novo_reg = pd.DataFrame([{
                             "ID": st.session_state.id_orcamento,
                             "Data": datetime.now().strftime("%d/%m/%Y"),
@@ -103,24 +116,23 @@ with aba1:
                             "Itens": str(st.session_state.itens)
                         }])
                         atualizado = pd.concat([existente, novo_reg], ignore_index=True)
-                        conn.update(data=atualizado)
+                        conn.update(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], data=atualizado)
                         st.success("Salvo com sucesso!")
                     except Exception as e:
                         st.error(f"Erro ao salvar: {e}")
 
             with c_b2:
-                # Função simples para gerar PDF
                 def gerar_pdf():
                     pdf = FPDF()
                     pdf.add_page()
                     pdf.set_font("Arial", "B", 16)
                     pdf.cell(0, 10, nome_empresa.upper(), ln=True)
-                    pdf.set_font("Arial", "", 10)
-                    pdf.cell(0, 5, f"Orçamento: {st.session_state.id_orcamento}", ln=True)
                     pdf.ln(10)
                     for r in st.session_state.itens:
+                        pdf.set_font("Arial", "", 10)
                         pdf.cell(0, 8, f"{r['Qtd']}x {r['Descrição']} - R$ {r['Total']:.2f}", ln=True)
                     pdf.ln(5)
+                    pdf.set_font("Arial", "B", 12)
                     pdf.cell(0, 10, f"TOTAL: R$ {v_final:.2f}", ln=True)
                     return bytes(pdf.output())
                 
@@ -135,7 +147,7 @@ with aba1:
 with aba2:
     st.title("📂 Histórico")
     try:
-        dados = conn.read(ttl="1m")
+        dados = conn.read(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], ttl="1m")
         st.dataframe(dados, use_container_width=True)
-    except:
-        st.info("Nenhum dado encontrado ou planilha não configurada.")
+    except Exception as e:
+        st.info("Aguardando dados da planilha...")
