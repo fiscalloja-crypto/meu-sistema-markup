@@ -7,13 +7,13 @@ from streamlit_gsheets import GSheetsConnection
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Sistema de Vendas Pro", layout="wide")
 
-# --- FUNÇÃO PARA CONECTAR COM CHAVE LIMPA ---
+# --- FUNÇÃO PARA CONECTAR SEM CONFLITOS ---
 def get_connection():
-    # Pegamos os dados dos secrets
+    # Pegamos os dados brutos dos secrets
     creds = st.secrets["connections"]["gsheets"]
     
-    # Criamos uma cópia limpa da chave privada para evitar erros de padding/bytes
-    # Transformamos o segredo em um dicionário comum para podermos manipular
+    # Criamos um dicionário de configuração limpo
+    # Isso evita os erros de 'Padding' e 'ASN.1' que tivemos antes
     creds_dict = {
         "type": creds["type"],
         "project_id": creds["project_id"],
@@ -24,18 +24,21 @@ def get_connection():
         "auth_uri": creds["auth_uri"],
         "token_uri": creds["token_uri"],
         "auth_provider_x509_cert_url": creds["auth_provider_x509_cert_url"],
-        "client_x509_cert_url": creds["client_x509_cert_url"],
-        "spreadsheet": creds["spreadsheet"]
+        "client_x509_cert_url": creds["client_x509_cert_url"]
     }
     
-    # Retorna a conexão usando o dicionário tratado
+    # IMPORTANTE: Extraímos o 'type' para não passar duplicado no st.connection
+    conn_type = creds_dict.pop("type")
+    
     return st.connection("gsheets", type=GSheetsConnection, **creds_dict)
 
 # Inicializa a conexão
 try:
     conn = get_connection()
+    url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
 except Exception as e:
     st.error(f"Erro ao configurar conexão: {e}")
+    st.stop()
 
 # --- INICIALIZAÇÃO DO ESTADO ---
 if 'itens' not in st.session_state:
@@ -50,7 +53,7 @@ with st.sidebar:
     contato_vendedor = st.text_input("Vendedor / Contato", "João - (11) 99999-9999")
     markup_padrao = st.number_input("Markup Padrão", value=1.80, step=0.05)
     st.divider()
-    if st.button("🔄 Forçar Sincronização"):
+    if st.button("🔄 Limpar Cache / Recarregar"):
         st.cache_data.clear()
         st.rerun()
 
@@ -106,8 +109,7 @@ with aba1:
             with c_b1:
                 if st.button("💾 SALVAR NA PLANILHA"):
                     try:
-                        # Lê dados atuais
-                        existente = conn.read(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], ttl=0)
+                        existente = conn.read(spreadsheet=url_planilha, ttl=0)
                         novo_reg = pd.DataFrame([{
                             "ID": st.session_state.id_orcamento,
                             "Data": datetime.now().strftime("%d/%m/%Y"),
@@ -116,7 +118,7 @@ with aba1:
                             "Itens": str(st.session_state.itens)
                         }])
                         atualizado = pd.concat([existente, novo_reg], ignore_index=True)
-                        conn.update(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], data=atualizado)
+                        conn.update(spreadsheet=url_planilha, data=atualizado)
                         st.success("Salvo com sucesso!")
                     except Exception as e:
                         st.error(f"Erro ao salvar: {e}")
@@ -125,15 +127,18 @@ with aba1:
                 def gerar_pdf():
                     pdf = FPDF()
                     pdf.add_page()
-                    pdf.set_font("Arial", "B", 16)
-                    pdf.cell(0, 10, nome_empresa.upper(), ln=True)
+                    pdf.set_font("Helvetica", "B", 16)
+                    pdf.cell(0, 10, nome_empresa.upper(), ln=True, align='C')
                     pdf.ln(10)
-                    for r in st.session_state.itens:
-                        pdf.set_font("Arial", "", 10)
-                        pdf.cell(0, 8, f"{r['Qtd']}x {r['Descrição']} - R$ {r['Total']:.2f}", ln=True)
+                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.cell(0, 10, f"Orçamento: {st.session_state.id_orcamento}", ln=True)
                     pdf.ln(5)
-                    pdf.set_font("Arial", "B", 12)
-                    pdf.cell(0, 10, f"TOTAL: R$ {v_final:.2f}", ln=True)
+                    pdf.set_font("Helvetica", "", 10)
+                    for r in st.session_state.itens:
+                        pdf.cell(0, 8, f"{r['Qtd']}x {r['Descrição']} ({r['Un']}) - R$ {r['Total']:.2f}", ln=True)
+                    pdf.ln(10)
+                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.cell(0, 10, f"TOTAL: R$ {v_final:.2f} ({selecionado})", ln=True)
                     return bytes(pdf.output())
                 
                 st.download_button("📥 Gerar PDF", data=gerar_pdf(), file_name=f"Orc_{st.session_state.id_orcamento}.pdf")
@@ -147,7 +152,7 @@ with aba1:
 with aba2:
     st.title("📂 Histórico")
     try:
-        dados = conn.read(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], ttl="1m")
+        dados = conn.read(spreadsheet=url_planilha, ttl="1m")
         st.dataframe(dados, use_container_width=True)
-    except Exception as e:
-        st.info("Aguardando dados da planilha...")
+    except:
+        st.info("Aguardando lançamentos na planilha...")
